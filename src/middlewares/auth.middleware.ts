@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 
 export interface AdminAuthRequest extends Request {
   adminEmail?: string;
 }
 
-export function requireAdminAuth(req: AdminAuthRequest, res: Response, next: NextFunction) {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@hatkholabazar.com';
+export async function requireAdminAuth(req: AdminAuthRequest, res: Response, next: NextFunction) {
   const adminSecret = process.env.ADMIN_API_SECRET;
 
   const authHeader = req.headers.authorization;
@@ -17,29 +17,116 @@ export function requireAdminAuth(req: AdminAuthRequest, res: Response, next: Nex
     token = authHeader.slice(7).trim();
   }
 
-  // Allow if secret token matches
+  // 1. Allow if secret token matches
   if (adminSecret && (token === adminSecret || secretHeader === adminSecret)) {
-    req.adminEmail = adminEmail;
+    try {
+      const db = mongoose.connection.db;
+      if (db) {
+        const query = emailHeader
+          ? { email: emailHeader.toLowerCase().trim() }
+          : { role: 'admin' };
+        const adminUser = await db.collection('user').findOne(query);
+        if (adminUser?.email) {
+          req.adminEmail = adminUser.email;
+          return next();
+        }
+      }
+    } catch {
+      // Fall through to fallback
+    }
+    req.adminEmail = emailHeader || process.env.ADMIN_EMAIL || 'admin@hatkholabazar.com';
     return next();
   }
 
-  // Allow if header email matches ADMIN_EMAIL and secret is provided or in dev
-  if (emailHeader && emailHeader.toLowerCase() === adminEmail.toLowerCase()) {
-    if (!adminSecret || token === adminSecret || secretHeader === adminSecret || process.env.NODE_ENV === 'test') {
-      req.adminEmail = adminEmail;
-      return next();
+  // 2. Allow test admin mock in test environment
+  if (process.env.NODE_ENV === 'test' && (token === 'test_admin_token' || req.headers['x-test-admin'] === 'true')) {
+    req.adminEmail = emailHeader || process.env.ADMIN_EMAIL || 'admin@hatkholabazar.com';
+    return next();
+  }
+
+  // 3. Dynamic database verification by email header if provided
+  if (emailHeader) {
+    try {
+      const db = mongoose.connection.db;
+      if (db) {
+        const user = await db.collection('user').findOne({ email: emailHeader.toLowerCase().trim() });
+        if (user && (user.role === 'admin' || user.isAdmin === true)) {
+          if (!adminSecret || token === adminSecret || secretHeader === adminSecret) {
+            req.adminEmail = user.email;
+            return next();
+          }
+        }
+      }
+    } catch {
+      // Fall through
     }
   }
 
-  // Also support authenticated test mock
-  if (process.env.NODE_ENV === 'test' && (token === 'test_admin_token' || req.headers['x-test-admin'] === 'true')) {
-    req.adminEmail = adminEmail;
-    return next();
+  // 4. Check active Better Auth session if present in cookies or headers
+  let sessionToken: string | undefined = undefined;
+  if (req.cookies) {
+    sessionToken =
+      req.cookies['better-auth.session_token'] ||
+      req.cookies['__Secure-better-auth.session_token'] ||
+      req.cookies['better-auth.session'] ||
+      req.cookies['better-auth.session_data'];
+  }
+  if (!sessionToken && req.headers.cookie) {
+    const rawCookies = req.headers.cookie.split(';');
+    for (const c of rawCookies) {
+      const trimmed = c.trim();
+      if (
+        trimmed.startsWith('better-auth.session_token=') ||
+        trimmed.startsWith('__Secure-better-auth.session_token=') ||
+        trimmed.startsWith('better-auth.session=')
+      ) {
+        sessionToken = decodeURIComponent(trimmed.split('=')[1]);
+        break;
+      }
+    }
+  }
+  if (!sessionToken && token && token !== adminSecret) {
+    sessionToken = token;
+  }
+  if (!sessionToken && req.headers['x-session-token']) {
+    sessionToken = String(req.headers['x-session-token']).trim();
   }
 
-  return res.status(401).json({
-    error: 'Unauthorized: Admin authentication required',
-    message: 'Only authorized administrator email can access private admin API',
+  if (sessionToken) {
+    try {
+      const db = mongoose.connection.db;
+      if (db) {
+        const rawSessionToken = sessionToken.includes('.')
+          ? sessionToken.slice(0, sessionToken.lastIndexOf('.'))
+          : sessionToken;
+        const session = await db.collection('session').findOne({
+          $or: [{ token: sessionToken }, { token: rawSessionToken }],
+        });
+        if (session && (!session.expiresAt || new Date(session.expiresAt) >= new Date())) {
+          const userIdObj = typeof session.userId === 'string' ? session.userId : session.userId?.toString();
+          let user = await db.collection('user').findOne({ id: userIdObj });
+          if (!user) {
+            try {
+              user = await db.collection('user').findOne({ _id: new mongoose.Types.ObjectId(userIdObj) });
+            } catch {
+              // Ignore invalid ObjectId
+            }
+          }
+
+          // Dynamic admin check from database user record
+          if (user && (user.role === 'admin' || user.isAdmin === true)) {
+            req.adminEmail = user.email;
+            return next();
+          }
+        }
+      }
+    } catch {
+      // Fall through to 404
+    }
+  }
+
+  // Conceal all admin routes from non-admins and scanners with a 404 Not Found
+  return res.status(404).json({
+    error: 'Not Found',
   });
 }
-

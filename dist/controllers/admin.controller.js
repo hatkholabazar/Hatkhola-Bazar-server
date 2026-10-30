@@ -1,7 +1,40 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminController = void 0;
-const mongoose_1 = require("mongoose");
+const mongoose_1 = __importStar(require("mongoose"));
 const Product_model_1 = require("../models/Product.model");
 const StockBatch_model_1 = require("../models/StockBatch.model");
 const Sale_model_1 = require("../models/Sale.model");
@@ -22,12 +55,27 @@ class AdminController {
     static async login(req, res) {
         try {
             const { email, password } = req.body;
-            const adminEmail = process.env.ADMIN_EMAIL || 'admin@hatkholabazar.com';
             const adminSecret = process.env.ADMIN_API_SECRET || 'hatkhola-dev-admin-secret-2026';
-            if (!email || email.trim().toLowerCase() !== adminEmail.toLowerCase()) {
+            const normalizedEmail = (email || '').toLowerCase().trim();
+            if (!normalizedEmail) {
                 return res.status(401).json({
                     error: 'Unauthorized',
-                    message: 'Public sign-up is disabled. Only designated ADMIN_EMAIL can access.',
+                    message: 'Email is required.',
+                });
+            }
+            // Query database user record dynamically for role and email
+            const db = mongoose_1.default.connection.db;
+            let dbUser = null;
+            if (db) {
+                dbUser = await db.collection('user').findOne({ email: normalizedEmail });
+            }
+            // Check if user has admin privileges dynamically from database (or initial bootstrap fallback)
+            const isDbAdmin = dbUser?.role === 'admin' || dbUser?.isAdmin === true;
+            const isEnvAdmin = process.env.ADMIN_EMAIL && normalizedEmail === process.env.ADMIN_EMAIL.toLowerCase().trim();
+            if (!isDbAdmin && !isEnvAdmin) {
+                return res.status(401).json({
+                    error: 'Unauthorized',
+                    message: 'Account does not have administrator privileges.',
                 });
             }
             // Password matches or secret token matches
@@ -36,8 +84,9 @@ class AdminController {
                     success: true,
                     token: adminSecret,
                     user: {
-                        email: adminEmail,
-                        role: 'admin',
+                        email: dbUser?.email || normalizedEmail,
+                        role: dbUser?.role || 'admin',
+                        name: dbUser?.name || 'Administrator',
                     },
                 });
             }

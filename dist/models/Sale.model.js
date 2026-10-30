@@ -54,6 +54,14 @@ const SaleSchema = new mongoose_1.Schema({
         default: Date.now,
         index: true,
     },
+    userId: {
+        type: String,
+        index: true,
+    },
+    idempotencyKey: {
+        type: String,
+        index: true,
+    },
     customerName: {
         type: String,
         trim: true,
@@ -178,4 +186,7 @@ const SaleSchema = new mongoose_1.Schema({
         type: Date,
     },
 }, { timestamps: { createdAt: true, updatedAt: false } });
+SaleSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
+SaleSchema.index({ userId: 1, soldAt: -1 });
+SaleSchema.index({ orderNo: 1 });
 exports.Sale = mongoose_1.default.models.Sale || mongoose_1.default.model('Sale', SaleSchema);

@@ -38,7 +38,7 @@ if (uri) {
       console.log(' Connected to MongoDB Atlas (hatkhola-bazar)!');
     })
     .catch((err) => {
-      console.warn('⚠️ MongoDB Atlas connection notice:', err.message);
+      console.warn('[Notice] MongoDB Atlas connection notice:', err.message);
     });
 }
 
@@ -156,7 +156,7 @@ app.post('/api/orders/:id/refund', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Hatkhola-Bazar server running on port ${port}`);
+  console.log(`Hatkhola-Bazar server running on port ${port}`);
 });
 
 module.exports = app;

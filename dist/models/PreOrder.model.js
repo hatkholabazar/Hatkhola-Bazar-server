@@ -87,6 +87,14 @@ const PreOrderSchema = new mongoose_1.Schema({
         trim: true,
         index: true,
     },
+    userId: {
+        type: String,
+        index: true,
+    },
+    idempotencyKey: {
+        type: String,
+        index: true,
+    },
     customerName: {
         type: String,
         required: true,
@@ -213,4 +221,5 @@ const PreOrderSchema = new mongoose_1.Schema({
         default: [],
     },
 }, { timestamps: true });
+PreOrderSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 exports.PreOrder = mongoose_1.default.models.PreOrder || mongoose_1.default.model('PreOrder', PreOrderSchema);

@@ -32,6 +32,9 @@ export interface IProduct extends Document {
   lowStockThresholdG: number;
   marginPercent: number;
   description?: string;
+  tagline?: string;
+  badge?: string;
+  origin?: string;
   benefits?: string[];
   image?: string;
   createdAt: Date;
@@ -117,6 +120,18 @@ const ProductSchema = new Schema<IProduct>(
       type: String,
       trim: true,
     },
+    tagline: {
+      type: String,
+      trim: true,
+    },
+    badge: {
+      type: String,
+      trim: true,
+    },
+    origin: {
+      type: String,
+      trim: true,
+    },
     benefits: {
       type: [String],
       default: [],
@@ -128,6 +143,9 @@ const ProductSchema = new Schema<IProduct>(
   },
   { timestamps: true }
 );
+
+ProductSchema.index({ slug: 1, isActive: 1 });
+ProductSchema.index({ code: 1, isActive: 1 });
 
 export const Product = mongoose.models.Product || mongoose.model<IProduct>('Product', ProductSchema);
 

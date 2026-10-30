@@ -21,6 +21,8 @@ export interface ISaleItem {
 
 export interface ISale extends Document {
   soldAt: Date;
+  userId?: string;
+  idempotencyKey?: string;
   customerName?: string;
   customerPhone?: string;
   customerAddress?: string;
@@ -79,6 +81,14 @@ const SaleSchema = new Schema<ISale>(
     soldAt: {
       type: Date,
       default: Date.now,
+      index: true,
+    },
+    userId: {
+      type: String,
+      index: true,
+    },
+    idempotencyKey: {
+      type: String,
       index: true,
     },
     customerName: {
@@ -207,6 +217,10 @@ const SaleSchema = new Schema<ISale>(
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
+
+SaleSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
+SaleSchema.index({ userId: 1, soldAt: -1 });
+SaleSchema.index({ orderNo: 1 });
 
 export const Sale = mongoose.models.Sale || mongoose.model<ISale>('Sale', SaleSchema);
 

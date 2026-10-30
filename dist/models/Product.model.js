@@ -109,6 +109,18 @@ const ProductSchema = new mongoose_1.Schema({
         type: String,
         trim: true,
     },
+    tagline: {
+        type: String,
+        trim: true,
+    },
+    badge: {
+        type: String,
+        trim: true,
+    },
+    origin: {
+        type: String,
+        trim: true,
+    },
     benefits: {
         type: [String],
         default: [],
@@ -118,4 +130,6 @@ const ProductSchema = new mongoose_1.Schema({
         trim: true,
     },
 }, { timestamps: true });
+ProductSchema.index({ slug: 1, isActive: 1 });
+ProductSchema.index({ code: 1, isActive: 1 });
 exports.Product = mongoose_1.default.models.Product || mongoose_1.default.model('Product', ProductSchema);

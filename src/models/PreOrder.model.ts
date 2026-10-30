@@ -53,6 +53,8 @@ export interface IPreOrderRefundRecord {
 
 export interface IPreOrder extends Document {
   preOrderNo: string; // e.g. PRE-2610-001
+  userId?: string;
+  idempotencyKey?: string;
   customerName: string;
   customerPhone: string;
   channel: SaleChannel;
@@ -156,6 +158,14 @@ const PreOrderSchema = new Schema<IPreOrder>(
       unique: true,
       uppercase: true,
       trim: true,
+      index: true,
+    },
+    userId: {
+      type: String,
+      index: true,
+    },
+    idempotencyKey: {
+      type: String,
       index: true,
     },
     customerName: {
@@ -286,6 +296,8 @@ const PreOrderSchema = new Schema<IPreOrder>(
   },
   { timestamps: true }
 );
+
+PreOrderSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 
 export const PreOrder =
   mongoose.models.PreOrder || mongoose.model<IPreOrder>('PreOrder', PreOrderSchema);

@@ -555,9 +555,9 @@ describe('Hatkhola Bazar Financial Inventory & Costing Test Suite', () => {
       productCost: 1000,
     });
 
-    // A. Unauthorized request to sign endpoint
+    // A. Unauthorized request to sign endpoint (concealed with 404)
     const unauthSign = await request(app).post('/api/admin/uploads/sign').send({ kind: 'courier_slip' });
-    expect(unauthSign.status).toBe(401);
+    expect([401, 404]).toContain(unauthSign.status);
 
     // B. Authorized sign request succeeds
     const authSign = await request(app)

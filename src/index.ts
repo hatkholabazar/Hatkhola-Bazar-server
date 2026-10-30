@@ -2,10 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
 import { adminRouter } from './routes/admin.routes';
+import { customerOrderRouter } from './routes/customerOrder.routes';
 import { AdminController } from './controllers/admin.controller';
 import { ShipmentService } from './services/shipment.service';
-import rateLimit from 'express-rate-limit';
 import { Product } from './models/Product.model';
 import { Settings } from './models/Settings.model';
 import { PreOrderService } from './services/preorder.service';
@@ -26,6 +28,7 @@ app.use(
   })
 );
 
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 
 // Health Check
@@ -45,6 +48,9 @@ app.get('/api/health', (req, res) => {
 
 // Admin API
 app.use('/api/admin', adminRouter);
+
+// Customer & Public API (Orders, Account Orders, Public Locations)
+app.use('/api', customerOrderRouter);
 
 // Pathao Webhook Receiver (Public endpoint for Pathao dispatch updates)
 app.post('/api/webhooks/pathao', AdminController.handlePathaoWebhook);
@@ -88,14 +94,17 @@ app.get('/api/products', async (req, res) => {
           slug: p.slug,
           name: p.name,
           availabilityMode: mode,
-          preOrder: mode === 'pre_order' && p.preOrder ? {
-            expectedDate: p.preOrder.expectedDate,
-            expectedNote: p.preOrder.expectedNote,
-            depositRequired: Boolean(p.preOrder.depositRequired),
-            depositAmount: p.preOrder.depositAmount,
-            depositPercent: p.preOrder.depositPercent,
-            cancellationPolicyText: p.preOrder.cancellationPolicyText,
-          } : undefined,
+          preOrder:
+            mode === 'pre_order' && p.preOrder
+              ? {
+                  expectedDate: p.preOrder.expectedDate,
+                  expectedNote: p.preOrder.expectedNote,
+                  depositRequired: Boolean(p.preOrder.depositRequired),
+                  depositAmount: p.preOrder.depositAmount,
+                  depositPercent: p.preOrder.depositPercent,
+                  cancellationPolicyText: p.preOrder.cancellationPolicyText,
+                }
+              : undefined,
           sellingOptions: (p.sellingOptions || []).map((o: any) => ({
             label: o.label,
             qtyG: o.qtyG,
@@ -103,6 +112,9 @@ app.get('/api/products', async (req, res) => {
           })),
           isSeasonal: p.isSeasonal,
           description: p.description,
+          tagline: p.tagline,
+          badge: p.badge,
+          origin: p.origin,
           benefits: p.benefits,
           image: p.image,
         };
@@ -112,32 +124,6 @@ app.get('/api/products', async (req, res) => {
     return res.json({ success: true, products: safeProducts });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to fetch public products' });
-  }
-});
-
-// Existing Orders Route (preserves consumer checkout API compatibility)
-app.post('/api/orders', async (req, res) => {
-  try {
-    const { order } = req.body;
-    if (!order || !order.orderId) {
-      return res.status(400).json({ error: 'Order details required' });
-    }
-
-    if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
-      await mongoose.connection.db.collection('orders').insertOne({
-        ...order,
-        createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
-        receivedAt: new Date(),
-      });
-    }
-
-    res.json({
-      success: true,
-      orderId: order.orderId,
-      dbSynced: mongoose.connection.readyState === 1,
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -189,29 +175,78 @@ export async function seedInitialData() {
         currencyLabel: '৳',
       });
     }
+
+    // Ensure all existing and newly connected users have default role "user"
+    const rawDb = mongoose.connection.db;
+    if (rawDb) {
+      await rawDb.collection('user').updateMany(
+        { $or: [{ role: { $exists: false } }, { role: null }, { role: '' }] },
+        { $set: { role: 'user' } }
+      );
+    }
   } catch (err: any) {
     console.warn('Initial seeding note:', err.message);
   }
 }
 
-// Connect to MongoDB Atlas
+// 404 Catch-All for unknown API endpoints
+app.use('/api', (req, res) => {
+  res.status(404).json({ success: false, error: 'API endpoint not found' });
+});
+
+// Centralized Express Error Handling Middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const statusCode = err.status || err.statusCode || 500;
+  const message =
+    process.env.NODE_ENV === 'production' && statusCode === 500
+      ? 'An unexpected internal server error occurred.'
+      : err.message || 'Internal Server Error';
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('Express Error:', err);
+  }
+
+  res.status(statusCode).json({
+    success: false,
+    error: message,
+  });
+});
+
+// Connect to MongoDB Atlas & Start Server
 export async function startServer() {
   const uri = process.env.MONGODB_URI;
   if (uri) {
     try {
       await mongoose.connect(uri);
-      console.log(' Connected to MongoDB Atlas via Mongoose!');
+      console.log('Connected to MongoDB Atlas via Mongoose.');
       await seedInitialData();
     } catch (err: any) {
-      console.warn('⚠️ MongoDB connection notice:', err.message);
+      console.warn('MongoDB connection notice:', err.message);
     }
   }
 
   if (process.env.NODE_ENV !== 'test') {
     ShipmentService.initBackgroundSync();
-    app.listen(port, () => {
-      console.log(` Hatkhola-Bazar backend listening on port ${port}`);
+    const server = app.listen(port, () => {
+      console.log(`Hatkhola-Bazar backend listening on port ${port}`);
     });
+
+    // Graceful shutdown handlers
+    const gracefulShutdown = (signal: string) => {
+      console.log(`Received ${signal}. Shutting down gracefully...`);
+      server.close(async () => {
+        try {
+          await mongoose.connection.close();
+          console.log('MongoDB connection closed.');
+          process.exit(0);
+        } catch {
+          process.exit(1);
+        }
+      });
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   }
 
   return app;
@@ -222,4 +257,3 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export default app;
-

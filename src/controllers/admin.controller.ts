@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { Product } from '../models/Product.model';
 import { StockBatch, IAttachment } from '../models/StockBatch.model';
 import { Sale, ISale, ISaleItem, IItemAllocation } from '../models/Sale.model';
@@ -36,13 +36,31 @@ export class AdminController {
   static async login(req: Request, res: Response) {
     try {
       const { email, password } = req.body;
-      const adminEmail = process.env.ADMIN_EMAIL || 'admin@hatkholabazar.com';
       const adminSecret = process.env.ADMIN_API_SECRET || 'hatkhola-dev-admin-secret-2026';
+      const normalizedEmail = (email || '').toLowerCase().trim();
 
-      if (!email || email.trim().toLowerCase() !== adminEmail.toLowerCase()) {
+      if (!normalizedEmail) {
         return res.status(401).json({
           error: 'Unauthorized',
-          message: 'Public sign-up is disabled. Only designated ADMIN_EMAIL can access.',
+          message: 'Email is required.',
+        });
+      }
+
+      // Query database user record dynamically for role and email
+      const db = mongoose.connection.db;
+      let dbUser: any = null;
+      if (db) {
+        dbUser = await db.collection('user').findOne({ email: normalizedEmail });
+      }
+
+      // Check if user has admin privileges dynamically from database (or initial bootstrap fallback)
+      const isDbAdmin = dbUser?.role === 'admin' || dbUser?.isAdmin === true;
+      const isEnvAdmin = process.env.ADMIN_EMAIL && normalizedEmail === process.env.ADMIN_EMAIL.toLowerCase().trim();
+
+      if (!isDbAdmin && !isEnvAdmin) {
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: 'Account does not have administrator privileges.',
         });
       }
 
@@ -52,8 +70,9 @@ export class AdminController {
           success: true,
           token: adminSecret,
           user: {
-            email: adminEmail,
-            role: 'admin',
+            email: dbUser?.email || normalizedEmail,
+            role: dbUser?.role || 'admin',
+            name: dbUser?.name || 'Administrator',
           },
         });
       }
