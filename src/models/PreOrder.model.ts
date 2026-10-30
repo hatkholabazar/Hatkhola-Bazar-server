@@ -33,6 +33,7 @@ export interface IPreOrderItem {
   optionLabel: string;
   qtyG: number;
   quotedPrice: number; // Integer Taka
+  discountAllocated?: number; // Integer Taka
 }
 
 export interface IPreOrderStatusHistory {
@@ -55,6 +56,13 @@ export interface IPreOrder extends Document {
   preOrderNo: string; // e.g. PRE-2610-001
   userId?: string;
   idempotencyKey?: string;
+  voucherId?: Types.ObjectId | string;
+  voucherCode?: string;
+  discountTotal?: number;
+  discountSource?: 'loyalty' | 'custom' | 'manual';
+  subtotalBeforeDiscount?: number;
+  lowMarginFlag?: boolean;
+  deliveredAt?: Date;
   customerName: string;
   customerPhone: string;
   channel: SaleChannel;
@@ -120,6 +128,7 @@ const PreOrderItemSchema = new Schema<IPreOrderItem>(
     optionLabel: { type: String, required: true, trim: true },
     qtyG: { type: Number, required: true, min: 1 },
     quotedPrice: { type: Number, required: true, min: 0 },
+    discountAllocated: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
 );
@@ -166,6 +175,37 @@ const PreOrderSchema = new Schema<IPreOrder>(
     },
     idempotencyKey: {
       type: String,
+      index: true,
+    },
+    voucherId: {
+      type: Schema.Types.Mixed,
+      index: true,
+    },
+    voucherCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      index: true,
+    },
+    discountTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    discountSource: {
+      type: String,
+      enum: ['loyalty', 'custom', 'manual'],
+    },
+    subtotalBeforeDiscount: {
+      type: Number,
+      min: 0,
+    },
+    lowMarginFlag: {
+      type: Boolean,
+      default: false,
+    },
+    deliveredAt: {
+      type: Date,
       index: true,
     },
     customerName: {

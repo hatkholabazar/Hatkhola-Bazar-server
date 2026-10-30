@@ -38,6 +38,7 @@ router.post('/batches/:id/attachments', admin_controller_1.AdminController.addAt
 router.delete('/batches/:id/attachments/:publicId', admin_controller_1.AdminController.removeAttachment);
 router.get('/attachments/:batchId/:publicId/url', admin_controller_1.AdminController.getAttachmentUrl);
 router.post('/uploads/sign', admin_controller_1.AdminController.getUploadSignature);
+router.post('/uploads/direct', admin_controller_1.AdminController.directUpload);
 // Sales & FIFO
 router.post('/sales/preview', admin_controller_1.AdminController.previewSaleAllocation);
 router.post('/sales', admin_controller_1.AdminController.createSale);

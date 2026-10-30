@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { CustomerOrderController } from '../controllers/customerOrder.controller';
 import { requireCustomerAuth } from '../middlewares/customerAuth.middleware';
+import { CloudinaryService } from '../services/cloudinary.service';
 
 export const customerOrderRouter = Router();
 
@@ -55,5 +56,28 @@ customerOrderRouter.get(
   '/public/locations/zones/:zoneId/areas',
   locationLookupLimiter,
   CustomerOrderController.getPublicAreas
+);
+
+// Customer image upload signature (for refund proofs)
+const uploadSignLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many upload requests. Please try again shortly.' },
+});
+
+customerOrderRouter.post(
+  '/uploads/sign',
+  uploadSignLimiter,
+  (req, res) => {
+    try {
+      const { kind = 'refund' } = req.body;
+      const signData = CloudinaryService.getUploadSignature(kind);
+      return res.json({ success: true, ...signData });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
 );
 

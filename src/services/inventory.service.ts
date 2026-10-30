@@ -31,6 +31,7 @@ export interface SaleItemInput {
   optionLabel: string;
   qtyG: number;
   sellingPrice: number; // integer taka
+  discountAllocated?: number;
 }
 
 export interface CreateSaleInput {
@@ -48,6 +49,11 @@ export interface CreateSaleInput {
   items: SaleItemInput[];
   giveawayG?: number;
   packagingCost?: number;
+  voucherId?: string;
+  voucherCode?: string;
+  discountTotal?: number;
+  discountSource?: 'loyalty' | 'custom' | 'manual';
+  subtotalBeforeDiscount?: number;
 }
 
 export interface FIFOAllocationPreviewItem {
@@ -351,11 +357,18 @@ export class InventoryService {
           optionLabel: itemInput.optionLabel,
           qtyG: Math.round(Number(itemInput.qtyG)),
           sellingPrice,
+          discountAllocated: itemInput.discountAllocated ? Math.round(Number(itemInput.discountAllocated)) : 0,
           allocations,
         });
       }
 
-      const grossProfit = totalRevenue - totalCogs - packagingCost;
+      const itemsTotal = totalRevenue;
+      const courierCharge = input.courierCharge ? Math.round(Number(input.courierCharge)) : 0;
+      const discountTotal = input.discountTotal ? Math.round(Number(input.discountTotal)) : 0;
+      const subtotalBeforeDiscount = itemsTotal;
+      const payableRevenue = Math.max(0, itemsTotal - discountTotal) + courierCharge;
+      const grossProfit = payableRevenue - totalCogs - packagingCost;
+      const lowMarginFlag = discountTotal > 0 && (itemsTotal - discountTotal - totalCogs) < 0;
 
       const sale = new Sale({
         soldAt: input.soldAt ? new Date(input.soldAt) : new Date(),
@@ -363,7 +376,7 @@ export class InventoryService {
         customerPhone: input.customerPhone?.trim(),
         customerAddress: input.customerAddress?.trim(),
         courierName: input.courierName,
-        courierCharge: input.courierCharge ? Math.round(Number(input.courierCharge)) : 0,
+        courierCharge: courierCharge,
         courierTrackingId: input.courierTrackingId?.trim(),
         deliveryNotes: input.deliveryNotes?.trim(),
         paymentTrxId: input.paymentTrxId?.trim(),
@@ -372,9 +385,15 @@ export class InventoryService {
         items: processedItems,
         giveawayG,
         packagingCost,
-        totalRevenue,
+        totalRevenue: payableRevenue,
         totalCogs,
         grossProfit,
+        voucherId: input.voucherId,
+        voucherCode: input.voucherCode,
+        discountTotal,
+        discountSource: input.discountSource,
+        subtotalBeforeDiscount,
+        lowMarginFlag,
         status: 'completed',
       });
 

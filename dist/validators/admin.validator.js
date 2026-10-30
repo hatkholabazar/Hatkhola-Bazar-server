@@ -53,6 +53,11 @@ exports.CreateSaleSchema = zod_1.z.object({
     items: zod_1.z.array(exports.SaleItemSchema).min(1, 'At least one item is required'),
     giveawayG: zod_1.z.number().int().nonnegative().optional().default(0),
     packagingCost: zod_1.z.number().int().nonnegative().optional(),
+    voucherId: zod_1.z.string().optional(),
+    voucherCode: zod_1.z.string().optional(),
+    discountTotal: zod_1.z.number().int().nonnegative().optional().default(0),
+    discountSource: zod_1.z.enum(['loyalty', 'custom', 'manual']).optional(),
+    subtotalBeforeDiscount: zod_1.z.number().int().nonnegative().optional(),
 });
 exports.VoidSchema = zod_1.z.object({
     voidReason: zod_1.z.string().min(3, 'A clear reason of at least 3 characters is required'),

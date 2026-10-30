@@ -53,6 +53,11 @@ export const CreateSaleSchema = z.object({
   items: z.array(SaleItemSchema).min(1, 'At least one item is required'),
   giveawayG: z.number().int().nonnegative().optional().default(0),
   packagingCost: z.number().int().nonnegative().optional(),
+  voucherId: z.string().optional(),
+  voucherCode: z.string().optional(),
+  discountTotal: z.number().int().nonnegative().optional().default(0),
+  discountSource: z.enum(['loyalty', 'custom', 'manual']).optional(),
+  subtotalBeforeDiscount: z.number().int().nonnegative().optional(),
 });
 
 export const VoidSchema = z.object({

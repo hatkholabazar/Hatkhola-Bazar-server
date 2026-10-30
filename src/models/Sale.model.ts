@@ -16,13 +16,22 @@ export interface ISaleItem {
   optionLabel: string;
   qtyG: number;
   sellingPrice: number; // Integer Taka
+  discountAllocated?: number; // Integer Taka discount distributed to this item
   allocations: IItemAllocation[];
 }
 
 export interface ISale extends Document {
   soldAt: Date;
+  deliveredAt?: Date;
+  orderNo?: string;
   userId?: string;
   idempotencyKey?: string;
+  voucherId?: Types.ObjectId | string;
+  voucherCode?: string;
+  discountTotal?: number;
+  discountSource?: 'loyalty' | 'custom' | 'manual';
+  subtotalBeforeDiscount?: number;
+  lowMarginFlag?: boolean;
   customerName?: string;
   customerPhone?: string;
   customerAddress?: string;
@@ -71,6 +80,7 @@ const SaleItemSchema = new Schema<ISaleItem>(
     optionLabel: { type: String, required: true, trim: true },
     qtyG: { type: Number, required: true, min: 1 },
     sellingPrice: { type: Number, required: true, min: 0 },
+    discountAllocated: { type: Number, default: 0, min: 0 },
     allocations: { type: [AllocationSchema], default: [] },
   },
   { _id: false }
@@ -83,6 +93,15 @@ const SaleSchema = new Schema<ISale>(
       default: Date.now,
       index: true,
     },
+    deliveredAt: {
+      type: Date,
+      index: true,
+    },
+    orderNo: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     userId: {
       type: String,
       index: true,
@@ -90,6 +109,33 @@ const SaleSchema = new Schema<ISale>(
     idempotencyKey: {
       type: String,
       index: true,
+    },
+    voucherId: {
+      type: Schema.Types.Mixed,
+      index: true,
+    },
+    voucherCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      index: true,
+    },
+    discountTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    discountSource: {
+      type: String,
+      enum: ['loyalty', 'custom', 'manual'],
+    },
+    subtotalBeforeDiscount: {
+      type: Number,
+      min: 0,
+    },
+    lowMarginFlag: {
+      type: Boolean,
+      default: false,
     },
     customerName: {
       type: String,
@@ -220,7 +266,6 @@ const SaleSchema = new Schema<ISale>(
 
 SaleSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 SaleSchema.index({ userId: 1, soldAt: -1 });
-SaleSchema.index({ orderNo: 1 });
 
 export const Sale = mongoose.models.Sale || mongoose.model<ISale>('Sale', SaleSchema);
 

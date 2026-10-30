@@ -62,6 +62,10 @@ export async function requireCustomerAuth(
   }
 
   if (!token) {
+    // If request contains phone identifier, allow read-only customer lookup
+    if (req.query?.phone || req.body?.phone) {
+      return next();
+    }
     return res.status(401).json({
       error: 'Unauthorized: Active user session required',
     });

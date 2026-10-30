@@ -8,6 +8,8 @@ import { PreOrder } from '../models/PreOrder.model';
 import { Settings } from '../models/Settings.model';
 import { PathaoService } from '../services/pathao.service';
 import { InventoryService } from '../services/inventory.service';
+import { VoucherService } from '../services/voucher.service';
+import { LoyaltyService } from '../services/loyalty.service';
 
 export class CustomerOrderController {
   /**
@@ -134,7 +136,40 @@ export class CustomerOrderController {
         });
       }
 
-      // 3. Delivery calculation (Integer Taka)
+      // 3. Voucher Evaluation
+      let appliedVoucher: any = null;
+      let discountTotal = 0;
+      let itemAllocations: any[] = [];
+      let evalItems: any[] = [];
+
+      if (data.voucherCode) {
+        evalItems = verifiedItems.map((vi) => ({
+          productId: vi.product._id.toString(),
+          productCode: vi.product.code,
+          productName: vi.product.name,
+          price: vi.unitPrice,
+          quantity: vi.quantity,
+        }));
+
+        const evalRes = await VoucherService.evaluateVoucher(
+          data.voucherCode,
+          evalItems,
+          data.phone,
+          user.id
+        );
+
+        if (!evalRes.isValid || !evalRes.voucher) {
+          return res.status(400).json({
+            error: evalRes.error || 'Invalid or inapplicable voucher code',
+          });
+        }
+
+        appliedVoucher = evalRes.voucher;
+        discountTotal = evalRes.discountAmount;
+        itemAllocations = evalRes.allocations || [];
+      }
+
+      // 4. Delivery calculation & Grand Total (Integer Taka)
       let deliveryCharge = 60;
       if (
         data.deliveryArea === 'outside' ||
@@ -144,7 +179,8 @@ export class CustomerOrderController {
       ) {
         deliveryCharge = 120;
       }
-      const grandTotal = itemsSubtotal + deliveryCharge;
+      const payableSubtotal = Math.max(0, itemsSubtotal - discountTotal);
+      const grandTotal = payableSubtotal + deliveryCharge;
 
       const orderTimestamp = Date.now();
       const orderId = `HB-${orderTimestamp.toString().slice(-6)}`;
@@ -154,115 +190,56 @@ export class CustomerOrderController {
       else if (data.paymentMethod === 'nagad') mappedPaymentMethod = 'nagad';
 
       let createdRecordType: 'sale' | 'pre_order' = 'sale';
+      let createdRecordId = '';
+      let createdRecordNo = orderId;
 
-      if (hasPreOrder) {
-        createdRecordType = 'pre_order';
-        const preOrderNo = `PRE-${orderTimestamp.toString().slice(-6)}`;
+      try {
+        if (hasPreOrder) {
+          createdRecordType = 'pre_order';
+          const preOrderNo = `PRE-${orderTimestamp.toString().slice(-6)}`;
+          createdRecordNo = preOrderNo;
 
-        const preOrderItems = verifiedItems.map((vi) => ({
-          product: vi.product._id,
-          productCode: vi.product.code,
-          productName: vi.product.name,
-          optionLabel: vi.optionLabel,
-          qtyG: vi.qtyG * vi.quantity,
-          quotedPrice: vi.lineTotal,
-        }));
+          const allocMap = new Map(
+            itemAllocations.map((a) => [a.productId.toString(), a.allocatedDiscount])
+          );
 
-        const deposits = [];
-        let depositTotal = 0;
-        if (data.paymentMethod === 'bkash' || data.paymentMethod === 'nagad') {
-          depositTotal = grandTotal;
-          deposits.push({
-            depositId: `DEP-${Date.now().toString().slice(-6)}`,
-            amount: grandTotal,
-            method: data.paymentMethod,
-            trxId: data.trxId,
-            receivedAt: new Date(),
-          });
-        }
+          const preOrderItems = verifiedItems.map((vi) => ({
+            product: vi.product._id,
+            productCode: vi.product.code,
+            productName: vi.product.name,
+            optionLabel: vi.optionLabel,
+            qtyG: vi.qtyG * vi.quantity,
+            quotedPrice: vi.lineTotal,
+            discountAllocated: allocMap.get(vi.product._id.toString()) || 0,
+          }));
 
-        await PreOrder.create({
-          preOrderNo,
-          userId: user.id,
-          idempotencyKey,
-          customerName: data.fullName,
-          customerPhone: data.phone,
-          channel: 'other',
-          address: data.address,
-          recipientName: data.fullName,
-          recipientPhone: data.phone,
-          recipientAddress: data.address,
-          pathaoCityId: data.cityId,
-          pathaoZoneId: data.zoneId,
-          pathaoAreaId: data.areaId,
-          pathaoCityName: data.cityName,
-          pathaoZoneName: data.zoneName,
-          pathaoAreaName: data.areaName,
-          courierCost: 0,
-          items: preOrderItems,
-          quotedTotal: grandTotal,
-          deposits,
-          depositTotal,
-          refundedTotal: 0,
-          forfeitedTotal: 0,
-          status: 'confirmed',
-          statusHistory: [
-            {
-              status: 'confirmed',
-              changedAt: new Date(),
-              changedBy: user.email,
-              note: 'Online checkout order submitted',
-            },
-          ],
-          note: data.notes,
-        });
-      } else {
-        const settings = await Settings.findOne();
-        const packagingCost = settings?.packagingCostPerOrder || 25;
+          const deposits = [];
+          let depositTotal = 0;
+          if (data.paymentMethod === 'bkash' || data.paymentMethod === 'nagad') {
+            depositTotal = grandTotal;
+            deposits.push({
+              depositId: `DEP-${Date.now().toString().slice(-6)}`,
+              amount: grandTotal,
+              method: data.paymentMethod,
+              trxId: data.trxId,
+              receivedAt: new Date(),
+            });
+          }
 
-        const saleItemsInput = verifiedItems.map((vi) => ({
-          productId: vi.product._id.toString(),
-          optionLabel: vi.optionLabel,
-          qtyG: vi.qtyG * vi.quantity,
-          sellingPrice: vi.lineTotal,
-        }));
-
-        try {
-          const createdSale = await InventoryService.createSale({
-            soldAt: new Date(),
-            customerName: data.fullName,
-            customerPhone: data.phone,
-            customerAddress: data.address,
-            channel: 'other',
-            paymentMethod: mappedPaymentMethod,
-            items: saleItemsInput,
-            courierCharge: deliveryCharge,
-            packagingCost,
-          });
-
-          createdSale.userId = user.id;
-          createdSale.idempotencyKey = idempotencyKey;
-          createdSale.recipientName = data.fullName;
-          createdSale.recipientPhone = data.phone;
-          createdSale.recipientAddress = data.address;
-          createdSale.pathaoCityId = data.cityId;
-          createdSale.pathaoZoneId = data.zoneId;
-          createdSale.pathaoAreaId = data.areaId;
-          createdSale.pathaoCityName = data.cityName;
-          createdSale.pathaoZoneName = data.zoneName;
-          createdSale.pathaoAreaName = data.areaName;
-          if (data.notes) createdSale.deliveryNotes = data.notes;
-          if (data.trxId) createdSale.paymentTrxId = data.trxId;
-          await createdSale.save();
-        } catch {
-          // If FIFO batch allocation fails (e.g. initial dev state or partial batches), create unallocated Sale record
-          await Sale.create({
-            soldAt: new Date(),
+          const createdPreOrder = await PreOrder.create({
+            preOrderNo,
             userId: user.id,
             idempotencyKey,
+            voucherId: appliedVoucher?._id,
+            voucherCode: appliedVoucher?.code,
+            discountTotal,
+            discountSource: appliedVoucher?.source || undefined,
+            subtotalBeforeDiscount: itemsSubtotal,
+            lowMarginFlag: discountTotal > 0 && itemsSubtotal - discountTotal <= 0,
             customerName: data.fullName,
             customerPhone: data.phone,
-            customerAddress: data.address,
+            channel: 'other',
+            address: data.address,
             recipientName: data.fullName,
             recipientPhone: data.phone,
             recipientAddress: data.address,
@@ -272,26 +249,141 @@ export class CustomerOrderController {
             pathaoCityName: data.cityName,
             pathaoZoneName: data.zoneName,
             pathaoAreaName: data.areaName,
-            deliveryNotes: data.notes,
-            paymentTrxId: data.trxId,
-            channel: 'other',
-            paymentMethod: mappedPaymentMethod,
-            items: verifiedItems.map((vi) => ({
-              product: vi.product._id,
-              optionLabel: vi.optionLabel,
-              qtyG: vi.qtyG * vi.quantity,
-              sellingPrice: vi.lineTotal,
-              allocations: [],
-            })),
-            giveawayG: 0,
-            packagingCost,
-            totalRevenue: grandTotal,
-            totalCogs: 0,
-            grossProfit: grandTotal - packagingCost,
-            courierCharge: deliveryCharge,
-            status: 'completed',
+            courierCost: 0,
+            items: preOrderItems,
+            quotedTotal: grandTotal,
+            deposits,
+            depositTotal,
+            refundedTotal: 0,
+            forfeitedTotal: 0,
+            status: 'confirmed',
+            statusHistory: [
+              {
+                status: 'confirmed',
+                changedAt: new Date(),
+                changedBy: user.email,
+                note: 'Online checkout order submitted',
+              },
+            ],
+            note: data.notes,
           });
+
+          createdRecordId = createdPreOrder._id.toString();
+        } else {
+          const settings = await Settings.findOne();
+          const packagingCost = settings?.packagingCostPerOrder || 25;
+
+          const allocMap = new Map(
+            itemAllocations.map((a) => [a.productId.toString(), a.allocatedDiscount])
+          );
+
+          const saleItemsInput = verifiedItems.map((vi) => ({
+            productId: vi.product._id.toString(),
+            optionLabel: vi.optionLabel,
+            qtyG: vi.qtyG * vi.quantity,
+            sellingPrice: vi.lineTotal,
+            discountAllocated: allocMap.get(vi.product._id.toString()) || 0,
+          }));
+
+          let createdSaleDoc: any = null;
+
+          try {
+            const createdSale = await InventoryService.createSale({
+              soldAt: new Date(),
+              customerName: data.fullName,
+              customerPhone: data.phone,
+              customerAddress: data.address,
+              channel: 'other',
+              paymentMethod: mappedPaymentMethod,
+              items: saleItemsInput,
+              courierCharge: deliveryCharge,
+              packagingCost,
+              voucherId: appliedVoucher?._id?.toString(),
+              voucherCode: appliedVoucher?.code,
+              discountTotal,
+              discountSource: appliedVoucher?.source || undefined,
+              subtotalBeforeDiscount: itemsSubtotal,
+            });
+
+            createdSale.userId = user.id;
+            createdSale.idempotencyKey = idempotencyKey;
+            createdSale.recipientName = data.fullName;
+            createdSale.recipientPhone = data.phone;
+            createdSale.recipientAddress = data.address;
+            createdSale.pathaoCityId = data.cityId;
+            createdSale.pathaoZoneId = data.zoneId;
+            createdSale.pathaoAreaId = data.areaId;
+            createdSale.pathaoCityName = data.cityName;
+            createdSale.pathaoZoneName = data.zoneName;
+            createdSale.pathaoAreaName = data.areaName;
+            if (data.notes) createdSale.deliveryNotes = data.notes;
+            if (data.trxId) createdSale.paymentTrxId = data.trxId;
+            await createdSale.save();
+            createdSaleDoc = createdSale;
+          } catch {
+            // If FIFO batch allocation fails (e.g. initial dev state or partial batches), create unallocated Sale record
+            createdSaleDoc = await Sale.create({
+              soldAt: new Date(),
+              userId: user.id,
+              idempotencyKey,
+              customerName: data.fullName,
+              customerPhone: data.phone,
+              customerAddress: data.address,
+              recipientName: data.fullName,
+              recipientPhone: data.phone,
+              recipientAddress: data.address,
+              pathaoCityId: data.cityId,
+              pathaoZoneId: data.zoneId,
+              pathaoAreaId: data.areaId,
+              pathaoCityName: data.cityName,
+              pathaoZoneName: data.zoneName,
+              pathaoAreaName: data.areaName,
+              deliveryNotes: data.notes,
+              paymentTrxId: data.trxId,
+              channel: 'other',
+              paymentMethod: mappedPaymentMethod,
+              items: verifiedItems.map((vi) => ({
+                product: vi.product._id,
+                optionLabel: vi.optionLabel,
+                qtyG: vi.qtyG * vi.quantity,
+                sellingPrice: vi.lineTotal,
+                discountAllocated: allocMap.get(vi.product._id.toString()) || 0,
+                allocations: [],
+              })),
+              giveawayG: 0,
+              packagingCost,
+              totalRevenue: grandTotal,
+              totalCogs: 0,
+              grossProfit: grandTotal - packagingCost,
+              courierCharge: deliveryCharge,
+              voucherId: appliedVoucher?._id,
+              voucherCode: appliedVoucher?.code,
+              discountTotal,
+              discountSource: appliedVoucher?.source || undefined,
+              subtotalBeforeDiscount: itemsSubtotal,
+              lowMarginFlag: discountTotal > 0 && itemsSubtotal - discountTotal <= 0,
+              status: 'completed',
+            });
+          }
+
+          createdRecordId = createdSaleDoc._id.toString();
+          createdRecordNo = createdSaleDoc.orderNo || `HB-${createdRecordId.slice(-6).toUpperCase()}`;
         }
+
+        // 5. Atomically reserve voucher for this created order
+        if (appliedVoucher) {
+          await VoucherService.reserveVoucher(
+            appliedVoucher.code,
+            createdRecordId,
+            createdRecordNo,
+            createdRecordType === 'pre_order' ? 'preorder' : 'sale',
+            data.phone,
+            user.id,
+            evalItems
+          );
+        }
+      } catch (orderErr: any) {
+        throw orderErr;
       }
 
       // Persist snapshot to orders collection for customer dashboard tracking
@@ -325,6 +417,8 @@ export class CustomerOrderController {
             lineTotal: vi.lineTotal,
           })),
           subtotal: itemsSubtotal,
+          discountTotal,
+          voucherCode: appliedVoucher?.code,
           deliveryCharge,
           grandTotal,
           paymentMethod: data.paymentMethod,
@@ -336,6 +430,26 @@ export class CustomerOrderController {
           orderType: createdRecordType,
           createdAt: new Date(),
         });
+      }
+
+      // Immediately credit product sales toward customer loyalty rewards (excluding delivery cost)
+      try {
+        await LoyaltyService.recordOrderSpend(
+          {
+            orderId,
+            orderNo: createdRecordNo,
+            userId: user.id,
+            customerPhone: data.phone,
+            customerName: data.fullName,
+            subtotal: itemsSubtotal,
+            discountTotal,
+            deliveryCharge,
+            items: verifiedItems,
+          },
+          createdRecordType === 'pre_order' ? 'preorder' : 'sale'
+        );
+      } catch (loyaltyErr) {
+        console.error('Failed to credit loyalty spend on order create:', loyaltyErr);
       }
 
       return res.status(201).json({
@@ -364,9 +478,17 @@ export class CustomerOrderController {
       const ordersList: any[] = [];
 
       if (db) {
+        const queryOr: any[] = [{ userId: user.id }];
+        try {
+          queryOr.push({ userId: new mongoose.Types.ObjectId(user.id) });
+        } catch {}
+        if (user.email) {
+          queryOr.push({ 'customer.email': user.email });
+        }
+
         const dbOrders = await db
           .collection('orders')
-          .find({ userId: user.id })
+          .find({ $or: queryOr })
           .sort({ createdAt: -1 })
           .toArray();
 
@@ -376,14 +498,33 @@ export class CustomerOrderController {
             orderNo: o.orderId || `HB-${o._id.toString().slice(-6)}`,
             orderType: o.orderType || 'sale',
             createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : new Date().toISOString(),
-            items: (o.items || []).map((it: any) => ({
-              productName: it.productName || 'Handcrafted Item',
-              optionLabel: it.optionLabel || '',
-              qtyG: it.qtyG || 0,
-              sellingPrice: it.sellingPrice || it.lineTotal || 0,
-            })),
+            items: (o.items || []).map((it: any) => {
+              const unitPrice = it.sellingPrice || it.price || (it.lineTotal && it.quantity ? Math.round(it.lineTotal / it.quantity) : 0);
+              const derivedQty = it.lineTotal && unitPrice > 0 ? Math.round(it.lineTotal / unitPrice) : 1;
+              const finalQuantity = it.quantity && it.quantity > 1 ? it.quantity : (derivedQty > 1 ? derivedQty : (it.quantity || 1));
+              return {
+                productId: it.productId,
+                productName: it.productName || 'Handcrafted Item',
+                optionLabel: it.optionLabel || '',
+                quantity: finalQuantity,
+                price: unitPrice,
+                sellingPrice: unitPrice,
+                lineTotal: it.lineTotal || (unitPrice * finalQuantity),
+                qtyG: it.qtyG || 0,
+              };
+            }),
+            customer: o.customer || {
+              name: user.name || 'Customer',
+              phone: '',
+              address: '',
+            },
+            deliveryArea: o.deliveryArea || (o.deliveryCharge === 120 ? 'Outside Chittagong' : 'Inside Chittagong'),
+            deliveryCharge: o.deliveryCharge !== undefined ? o.deliveryCharge : 60,
+            subtotal: o.subtotal || (o.grandTotal ? o.grandTotal - (o.deliveryCharge || 60) : 0),
             totalAmount: o.grandTotal || o.total || 0,
+            grandTotal: o.grandTotal || o.total || 0,
             paymentMethod: o.paymentMethod || 'COD',
+            paymentDetails: o.paymentDetails,
             status: o.status || 'Confirmed',
             statusLabel: {
               en: o.status || 'Confirmed',

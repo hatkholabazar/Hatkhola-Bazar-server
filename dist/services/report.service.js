@@ -6,6 +6,7 @@ const StockBatch_model_1 = require("../models/StockBatch.model");
 const Sale_model_1 = require("../models/Sale.model");
 const StockAdjustment_model_1 = require("../models/StockAdjustment.model");
 const PreOrder_model_1 = require("../models/PreOrder.model");
+const Voucher_model_1 = require("../models/Voucher.model");
 class ReportService {
     /**
      * Generates comprehensive financial and inventory reports
@@ -31,6 +32,47 @@ class ReportService {
         const totalCourierCost = sales.reduce((acc, s) => acc + (s.courierCost || 0), 0);
         const totalGrossProfit = totalRevenue - totalCogs - totalPackaging - totalCourierCost;
         const totalGiveawayG = sales.reduce((acc, s) => acc + s.giveawayG, 0);
+        // Voucher & Loyalty Discount Accounting
+        const loyaltyDiscountsGiven = sales
+            .filter((s) => s.discountSource === 'loyalty')
+            .reduce((acc, s) => acc + (s.discountTotal || 0), 0);
+        const customDiscountsGiven = sales
+            .filter((s) => s.discountSource !== 'loyalty')
+            .reduce((acc, s) => acc + (s.discountTotal || 0), 0);
+        const totalDiscountsGiven = loyaltyDiscountsGiven + customDiscountsGiven;
+        const discountsPercentOfRevenue = totalRevenue > 0
+            ? Number(((totalDiscountsGiven / (totalRevenue + totalDiscountsGiven)) * 100).toFixed(1))
+            : 0;
+        // Outstanding Voucher Liability & Expired Unused
+        const now = new Date();
+        const activeVouchers = await Voucher_model_1.Voucher.find({
+            status: 'active',
+            expiresAt: { $gt: now },
+        });
+        const outstandingVoucherLiability = activeVouchers.reduce((acc, v) => {
+            const remainingUses = v.usageLimitTotal !== null && v.usageLimitTotal !== undefined
+                ? Math.max(0, v.usageLimitTotal - v.usedCount)
+                : 1;
+            return acc + (v.discountType === 'fixed' ? v.value * remainingUses : (v.maxDiscountAmount || 0) * remainingUses);
+        }, 0);
+        const expiredVouchers = await Voucher_model_1.Voucher.find({
+            $or: [{ status: 'expired' }, { expiresAt: { $lte: now }, usedCount: 0 }],
+        });
+        const expiredUnusedVouchers = expiredVouchers.reduce((acc, v) => {
+            if (v.usedCount === 0) {
+                return acc + (v.discountType === 'fixed' ? v.value : (v.maxDiscountAmount || 0));
+            }
+            return acc;
+        }, 0);
+        // Sales with vs without voucher
+        const salesWithVoucher = sales.filter((s) => s.voucherCode);
+        const salesWithoutVoucher = sales.filter((s) => !s.voucherCode);
+        const aovWithVoucher = salesWithVoucher.length > 0
+            ? Math.round(salesWithVoucher.reduce((acc, s) => acc + s.totalRevenue, 0) / salesWithVoucher.length)
+            : 0;
+        const aovWithoutVoucher = salesWithoutVoucher.length > 0
+            ? Math.round(salesWithoutVoucher.reduce((acc, s) => acc + s.totalRevenue, 0) / salesWithoutVoucher.length)
+            : 0;
         // 3. Fetch adjustments in date range
         const adjDateFilter = {};
         if (range.from || range.to) {
@@ -157,6 +199,18 @@ class ReportService {
                 depositsHeld,
                 otherIncomeForfeited: totalForfeitedIncome,
                 totalRefundedDeposits,
+                vouchers: {
+                    loyaltyDiscountsGiven,
+                    customDiscountsGiven,
+                    totalDiscountsGiven,
+                    discountsPercentOfRevenue,
+                    outstandingVoucherLiability,
+                    expiredUnusedVouchers,
+                    salesWithVoucherCount: salesWithVoucher.length,
+                    salesWithoutVoucherCount: salesWithoutVoucher.length,
+                    aovWithVoucher,
+                    aovWithoutVoucher,
+                },
             },
             preOrders: {
                 openCount: openPreOrders.length,
@@ -164,6 +218,18 @@ class ReportService {
                 totalOpenGrams: totalOpenPreOrderGrams,
                 otherIncomeForfeited: totalForfeitedIncome,
                 totalRefundedDeposits,
+                vouchers: {
+                    loyaltyDiscountsGiven,
+                    customDiscountsGiven,
+                    totalDiscountsGiven,
+                    discountsPercentOfRevenue,
+                    outstandingVoucherLiability,
+                    expiredUnusedVouchers,
+                    salesWithVoucherCount: salesWithVoucher.length,
+                    salesWithoutVoucherCount: salesWithoutVoucher.length,
+                    aovWithVoucher,
+                    aovWithoutVoucher,
+                },
             },
             stockOnHand: stockOnHandPerProduct,
             totalInventoryValue: stockOnHandPerProduct.reduce((acc, p) => acc + p.stockValue, 0),

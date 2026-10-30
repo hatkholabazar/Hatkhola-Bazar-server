@@ -49,6 +49,7 @@ exports.CustomerCreateOrderSchema = zod_1.z
     items: zod_1.z
         .array(exports.CustomerOrderItemSchema)
         .min(1, 'At least one product item is required for checkout'),
+    voucherCode: zod_1.z.string().trim().max(30).optional(),
     paymentMethod: zod_1.z.enum(['cod', 'bkash', 'nagad', 'cash_on_delivery']).default('cod'),
     senderNumber: zod_1.z.string().trim().optional(),
     trxId: zod_1.z.string().trim().optional(),

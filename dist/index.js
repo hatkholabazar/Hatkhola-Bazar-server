@@ -13,11 +13,14 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const admin_routes_1 = require("./routes/admin.routes");
 const customerOrder_routes_1 = require("./routes/customerOrder.routes");
+const loyalty_routes_1 = require("./routes/loyalty.routes");
 const admin_controller_1 = require("./controllers/admin.controller");
 const shipment_service_1 = require("./services/shipment.service");
+const loyalty_service_1 = require("./services/loyalty.service");
 const Product_model_1 = require("./models/Product.model");
 const Settings_model_1 = require("./models/Settings.model");
 const preorder_service_1 = require("./services/preorder.service");
+const node_cron_1 = __importDefault(require("node-cron"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const port = process.env.PORT || 5000;
@@ -46,8 +49,10 @@ app.get('/api/health', (req, res) => {
 });
 // Admin API
 app.use('/api/admin', admin_routes_1.adminRouter);
-// Customer & Public API (Orders, Account Orders, Public Locations)
+app.use('/api/admin/loyalty', loyalty_routes_1.adminLoyaltyRouter);
+// Customer & Public API (Orders, Account Orders, Public Locations, Loyalty, Vouchers)
 app.use('/api', customerOrder_routes_1.customerOrderRouter);
+app.use('/api', loyalty_routes_1.loyaltyRouter);
 // Pathao Webhook Receiver (Public endpoint for Pathao dispatch updates)
 app.post('/api/webhooks/pathao', admin_controller_1.AdminController.handlePathaoWebhook);
 // Public Order Tracking (Strict rate limited: 10 requests / 15 min per IP)
@@ -204,6 +209,21 @@ async function startServer() {
     }
     if (process.env.NODE_ENV !== 'test') {
         shipment_service_1.ShipmentService.initBackgroundSync();
+        // Hourly background job for maturing loyalty hold entries
+        if (process.env.LOYALTY_JOB_ENABLED !== 'false') {
+            node_cron_1.default.schedule('0 * * * *', async () => {
+                try {
+                    const maturedRes = await loyalty_service_1.LoyaltyService.processMaturedHoldEntries();
+                    if (maturedRes.processedCount > 0) {
+                        console.log(`[Loyalty Cron] Matured ${maturedRes.processedCount} loyalty hold ledger entries (${maturedRes.vouchersIssued} vouchers issued)`);
+                    }
+                }
+                catch (err) {
+                    console.error('[Loyalty Cron] Error processing matured entries:', err.message);
+                }
+            });
+            console.log('[Loyalty Cron] Hourly maturity sync job scheduled');
+        }
         const server = app.listen(port, () => {
             console.log(`Hatkhola-Bazar backend listening on port ${port}`);
         });

@@ -59,6 +59,7 @@ const PreOrderItemSchema = new mongoose_1.Schema({
     optionLabel: { type: String, required: true, trim: true },
     qtyG: { type: Number, required: true, min: 1 },
     quotedPrice: { type: Number, required: true, min: 0 },
+    discountAllocated: { type: Number, default: 0, min: 0 },
 }, { _id: false });
 const PreOrderStatusHistorySchema = new mongoose_1.Schema({
     status: {
@@ -93,6 +94,37 @@ const PreOrderSchema = new mongoose_1.Schema({
     },
     idempotencyKey: {
         type: String,
+        index: true,
+    },
+    voucherId: {
+        type: mongoose_1.Schema.Types.Mixed,
+        index: true,
+    },
+    voucherCode: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        index: true,
+    },
+    discountTotal: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    discountSource: {
+        type: String,
+        enum: ['loyalty', 'custom', 'manual'],
+    },
+    subtotalBeforeDiscount: {
+        type: Number,
+        min: 0,
+    },
+    lowMarginFlag: {
+        type: Boolean,
+        default: false,
+    },
+    deliveredAt: {
+        type: Date,
         index: true,
     },
     customerName: {

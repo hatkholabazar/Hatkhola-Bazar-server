@@ -46,6 +46,7 @@ const report_service_1 = require("../services/report.service");
 const preorder_service_1 = require("../services/preorder.service");
 const pathao_service_1 = require("../services/pathao.service");
 const shipment_service_1 = require("../services/shipment.service");
+const voucher_service_1 = require("../services/voucher.service");
 const Shipment_model_1 = require("../models/Shipment.model");
 const admin_validator_1 = require("../validators/admin.validator");
 class AdminController {
@@ -549,6 +550,25 @@ class AdminController {
         }
     }
     /**
+     * Direct server-side upload to Cloudinary (Base64 / data URI / buffer)
+     */
+    static async directUpload(req, res) {
+        try {
+            const { file, kind = 'other', publicId } = req.body;
+            if (!file) {
+                return res.status(400).json({ success: false, error: 'File data is required' });
+            }
+            const result = await cloudinary_service_1.CloudinaryService.uploadDirect(file, kind, publicId);
+            return res.json({
+                success: true,
+                ...result,
+            });
+        }
+        catch (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    }
+    /**
      * Preview FIFO allocation before saving sale
      */
     static async previewSaleAllocation(req, res) {
@@ -570,7 +590,26 @@ class AdminController {
     static async createSale(req, res) {
         try {
             const parsed = admin_validator_1.CreateSaleSchema.parse(req.body);
+            let evalItems = [];
+            if (parsed.voucherCode) {
+                evalItems = parsed.items.map((it) => ({
+                    productId: it.productId,
+                    productName: it.optionLabel,
+                    price: it.sellingPrice,
+                    quantity: 1,
+                }));
+                const evalRes = await voucher_service_1.VoucherService.evaluateVoucher(parsed.voucherCode, evalItems, parsed.customerPhone);
+                if (!evalRes.isValid || !evalRes.voucher) {
+                    return res.status(400).json({ error: evalRes.error || 'Voucher cannot be applied to this sale' });
+                }
+                parsed.voucherId = evalRes.voucher._id.toString();
+                parsed.discountTotal = evalRes.discountAmount;
+                parsed.discountSource = (evalRes.voucher.source === 'compensation' ? 'manual' : evalRes.voucher.source);
+            }
             const sale = await inventory_service_1.InventoryService.createSale(parsed);
+            if (parsed.voucherCode && parsed.voucherId) {
+                await voucher_service_1.VoucherService.reserveVoucher(parsed.voucherCode, sale._id.toString(), sale.orderNo || `HB-${sale._id.toString().slice(-6).toUpperCase()}`, 'sale', parsed.customerPhone || '01000000000', null, evalItems);
+            }
             return res.status(201).json({ success: true, sale });
         }
         catch (err) {

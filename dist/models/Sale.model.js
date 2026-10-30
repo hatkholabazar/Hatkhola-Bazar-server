@@ -46,12 +46,22 @@ const SaleItemSchema = new mongoose_1.Schema({
     optionLabel: { type: String, required: true, trim: true },
     qtyG: { type: Number, required: true, min: 1 },
     sellingPrice: { type: Number, required: true, min: 0 },
+    discountAllocated: { type: Number, default: 0, min: 0 },
     allocations: { type: [AllocationSchema], default: [] },
 }, { _id: false });
 const SaleSchema = new mongoose_1.Schema({
     soldAt: {
         type: Date,
         default: Date.now,
+        index: true,
+    },
+    deliveredAt: {
+        type: Date,
+        index: true,
+    },
+    orderNo: {
+        type: String,
+        trim: true,
         index: true,
     },
     userId: {
@@ -61,6 +71,33 @@ const SaleSchema = new mongoose_1.Schema({
     idempotencyKey: {
         type: String,
         index: true,
+    },
+    voucherId: {
+        type: mongoose_1.Schema.Types.Mixed,
+        index: true,
+    },
+    voucherCode: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        index: true,
+    },
+    discountTotal: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    discountSource: {
+        type: String,
+        enum: ['loyalty', 'custom', 'manual'],
+    },
+    subtotalBeforeDiscount: {
+        type: Number,
+        min: 0,
+    },
+    lowMarginFlag: {
+        type: Boolean,
+        default: false,
     },
     customerName: {
         type: String,
@@ -188,5 +225,4 @@ const SaleSchema = new mongoose_1.Schema({
 }, { timestamps: { createdAt: true, updatedAt: false } });
 SaleSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 SaleSchema.index({ userId: 1, soldAt: -1 });
-SaleSchema.index({ orderNo: 1 });
 exports.Sale = mongoose_1.default.models.Sale || mongoose_1.default.model('Sale', SaleSchema);

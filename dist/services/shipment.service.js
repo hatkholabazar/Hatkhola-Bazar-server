@@ -10,6 +10,8 @@ const Shipment_model_1 = require("../models/Shipment.model");
 const Sale_model_1 = require("../models/Sale.model");
 const PreOrder_model_1 = require("../models/PreOrder.model");
 const pathao_service_1 = require("./pathao.service");
+const loyalty_service_1 = require("./loyalty.service");
+const voucher_service_1 = require("./voucher.service");
 const env_1 = require("../config/env");
 class ShipmentService {
     static cronJobInitialized = false;
@@ -325,6 +327,7 @@ class ShipmentService {
             });
         }
         await shipment.save();
+        await this.handleStatusSideEffects(shipment, 'cancelled');
         return shipment;
     }
     /**
@@ -347,6 +350,7 @@ class ShipmentService {
             timestamp: new Date(),
         });
         await shipment.save();
+        await this.handleStatusSideEffects(shipment, 'cancelled');
         return shipment;
     }
     /**
@@ -391,7 +395,30 @@ class ShipmentService {
             timestamp: new Date(),
         });
         await shipment.save();
+        await this.handleStatusSideEffects(shipment, statusInfo.slug);
         return { processed: true, message: `Updated shipment to status ${orderStatus}` };
+    }
+    /**
+     * Internal trigger for loyalty delivery earning and reversals based on courier status
+     */
+    static async handleStatusSideEffects(shipment, slug) {
+        try {
+            if (slug === 'delivered' || slug === 'partial_delivered') {
+                const orderModel = shipment.orderType === 'sale' ? Sale_model_1.Sale : PreOrder_model_1.PreOrder;
+                const order = await orderModel.findById(shipment.orderId);
+                if (order) {
+                    await loyalty_service_1.LoyaltyService.recordOrderDelivery(order, shipment.orderType);
+                    await voucher_service_1.VoucherService.redeemVoucher(shipment.orderId);
+                }
+            }
+            else if (slug === 'returned' || slug === 'cancelled') {
+                await loyalty_service_1.LoyaltyService.handleOrderReversal(shipment.orderId, shipment.orderType, `Courier status: ${slug}`);
+                await voucher_service_1.VoucherService.reverseVoucher(shipment.orderId, `Courier status: ${slug}`);
+            }
+        }
+        catch (err) {
+            console.warn('Loyalty delivery trigger notice:', err.message);
+        }
     }
     /**
      * Public Order Tracking:

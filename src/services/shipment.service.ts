@@ -4,6 +4,8 @@ import { Shipment, IShipment, ShipmentOrderType, ShipmentStatus } from '../model
 import { Sale, ISale } from '../models/Sale.model';
 import { PreOrder, IPreOrder } from '../models/PreOrder.model';
 import { PathaoService, PathaoCreateOrderPayload, resolvePathaoStatus } from './pathao.service';
+import { LoyaltyService } from './loyalty.service';
+import { VoucherService } from './voucher.service';
 import { env } from '../config/env';
 
 export interface DispatchToPathaoInput {
@@ -386,6 +388,7 @@ export class ShipmentService {
     }
 
     await shipment.save();
+    await this.handleStatusSideEffects(shipment, 'cancelled');
     return shipment;
   }
 
@@ -414,6 +417,7 @@ export class ShipmentService {
     });
 
     await shipment.save();
+    await this.handleStatusSideEffects(shipment, 'cancelled');
     return shipment;
   }
 
@@ -464,7 +468,29 @@ export class ShipmentService {
     });
 
     await shipment.save();
+    await this.handleStatusSideEffects(shipment, statusInfo.slug);
     return { processed: true, message: `Updated shipment to status ${orderStatus}` };
+  }
+
+  /**
+   * Internal trigger for loyalty delivery earning and reversals based on courier status
+   */
+  private static async handleStatusSideEffects(shipment: IShipment, slug: string): Promise<void> {
+    try {
+      if (slug === 'delivered' || slug === 'partial_delivered') {
+        const orderModel = shipment.orderType === 'sale' ? Sale : PreOrder;
+        const order = await orderModel.findById(shipment.orderId);
+        if (order) {
+          await LoyaltyService.recordOrderDelivery(order, shipment.orderType);
+          await VoucherService.redeemVoucher(shipment.orderId);
+        }
+      } else if (slug === 'returned' || slug === 'cancelled') {
+        await LoyaltyService.handleOrderReversal(shipment.orderId, shipment.orderType, `Courier status: ${slug}`);
+        await VoucherService.reverseVoucher(shipment.orderId, `Courier status: ${slug}`);
+      }
+    } catch (err: any) {
+      console.warn('Loyalty delivery trigger notice:', err.message);
+    }
   }
 
   /**

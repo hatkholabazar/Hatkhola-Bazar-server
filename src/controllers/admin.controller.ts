@@ -11,6 +11,7 @@ import { ReportService } from '../services/report.service';
 import { PreOrderService } from '../services/preorder.service';
 import { PathaoService } from '../services/pathao.service';
 import { ShipmentService } from '../services/shipment.service';
+import { VoucherService } from '../services/voucher.service';
 import { Shipment } from '../models/Shipment.model';
 import {
   CreateBatchSchema,
@@ -604,6 +605,26 @@ export class AdminController {
   }
 
   /**
+   * Direct server-side upload to Cloudinary (Base64 / data URI / buffer)
+   */
+  static async directUpload(req: Request, res: Response) {
+    try {
+      const { file, kind = 'other', publicId } = req.body;
+      if (!file) {
+        return res.status(400).json({ success: false, error: 'File data is required' });
+      }
+
+      const result = await CloudinaryService.uploadDirect(file, kind, publicId);
+      return res.json({
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
    * Preview FIFO allocation before saving sale
    */
   static async previewSaleAllocation(req: Request, res: Response) {
@@ -625,7 +646,45 @@ export class AdminController {
   static async createSale(req: Request, res: Response) {
     try {
       const parsed = CreateSaleSchema.parse(req.body);
+
+      let evalItems: any[] = [];
+      if (parsed.voucherCode) {
+        evalItems = parsed.items.map((it: any) => ({
+          productId: it.productId,
+          productName: it.optionLabel,
+          price: it.sellingPrice,
+          quantity: 1,
+        }));
+
+        const evalRes = await VoucherService.evaluateVoucher(
+          parsed.voucherCode,
+          evalItems,
+          parsed.customerPhone
+        );
+
+        if (!evalRes.isValid || !evalRes.voucher) {
+          return res.status(400).json({ error: evalRes.error || 'Voucher cannot be applied to this sale' });
+        }
+
+        parsed.voucherId = evalRes.voucher._id.toString();
+        parsed.discountTotal = evalRes.discountAmount;
+        parsed.discountSource = (evalRes.voucher.source === 'compensation' ? 'manual' : evalRes.voucher.source) as any;
+      }
+
       const sale = await InventoryService.createSale(parsed);
+
+      if (parsed.voucherCode && parsed.voucherId) {
+        await VoucherService.reserveVoucher(
+          parsed.voucherCode,
+          sale._id.toString(),
+          sale.orderNo || `HB-${sale._id.toString().slice(-6).toUpperCase()}`,
+          'sale',
+          parsed.customerPhone || '01000000000',
+          null,
+          evalItems
+        );
+      }
+
       return res.status(201).json({ success: true, sale });
     } catch (err: any) {
       if (err.name === 'ZodError') {

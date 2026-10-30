@@ -39,7 +39,16 @@ const AuditLogSchema = new mongoose_1.Schema({
     entityType: {
         type: String,
         required: true,
-        enum: ['product', 'preorder', 'batch', 'sale'],
+        enum: [
+            'product',
+            'preorder',
+            'batch',
+            'sale',
+            'loyalty_settings',
+            'loyalty_account',
+            'voucher',
+            'voucher_redemption',
+        ],
         index: true,
     },
     entityId: {

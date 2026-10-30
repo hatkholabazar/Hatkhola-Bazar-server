@@ -1,6 +1,14 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
-export type AuditEntityType = 'product' | 'preorder' | 'batch' | 'sale';
+export type AuditEntityType =
+  | 'product'
+  | 'preorder'
+  | 'batch'
+  | 'sale'
+  | 'loyalty_settings'
+  | 'loyalty_account'
+  | 'voucher'
+  | 'voucher_redemption';
 
 export interface IAuditLog extends Document {
   entityType: AuditEntityType;
@@ -18,7 +26,16 @@ const AuditLogSchema = new Schema<IAuditLog>(
     entityType: {
       type: String,
       required: true,
-      enum: ['product', 'preorder', 'batch', 'sale'],
+      enum: [
+        'product',
+        'preorder',
+        'batch',
+        'sale',
+        'loyalty_settings',
+        'loyalty_account',
+        'voucher',
+        'voucher_redemption',
+      ],
       index: true,
     },
     entityId: {

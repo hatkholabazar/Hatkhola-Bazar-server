@@ -19,18 +19,37 @@ class CloudinaryService {
         }
     }
     /**
+     * Resolves appropriate Cloudinary folder based on asset purpose
+     */
+    static resolveFolder(kind) {
+        switch (kind.toLowerCase()) {
+            case 'product':
+            case 'products':
+                return 'hatkhola-bazar/products';
+            case 'refund':
+            case 'refunds':
+                return 'hatkhola-bazar/refunds';
+            case 'batch':
+            case 'purchase':
+            case 'courier_slip':
+            case 'invoice':
+            default:
+                return 'hatkhola-bazar/purchases';
+        }
+    }
+    /**
      * Generate signature for direct signed upload from browser to Cloudinary
+     * Uses public 'upload' type so image URLs are permanent and directly embeddable like ImageBB
      */
     static getUploadSignature(kind = 'other') {
         this.configure();
         const timestamp = Math.round(Date.now() / 1000);
-        const folder = 'hatkhola-bazar/purchases';
-        const type = 'authenticated';
-        const allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
+        const folder = this.resolveFolder(kind);
+        const type = 'upload';
+        const allowedFormats = ['jpg', 'jpeg', 'png', 'webp', 'avif'];
         const paramsToSign = {
             folder,
             timestamp,
-            type,
         };
         let signature = '';
         const apiSecret = process.env.CLOUDINARY_API_SECRET || 'mock_secret_for_test';
@@ -52,26 +71,58 @@ class CloudinaryService {
         };
     }
     /**
-     * Generate short-lived signed download / viewing URL for private authenticated asset
+     * Server-side upload from base64, buffer, or remote URL directly to Cloudinary
+     */
+    static async uploadDirect(fileData, kind = 'other', customPublicId) {
+        this.configure();
+        const folder = this.resolveFolder(kind);
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'zswkxeiy';
+        if (!this.isConfigured()) {
+            // Mock fallback for test environment
+            const mockId = customPublicId || `mock_${Date.now()}`;
+            return {
+                url: `http://res.cloudinary.com/${cloudName}/image/upload/${folder}/${mockId}.jpg`,
+                secureUrl: `https://res.cloudinary.com/${cloudName}/image/upload/${folder}/${mockId}.jpg`,
+                publicId: `${folder}/${mockId}`,
+                format: 'jpg',
+                bytes: 10240,
+                width: 800,
+                height: 800,
+            };
+        }
+        const options = {
+            folder,
+            resource_type: 'image',
+            overwrite: true,
+            invalidate: true,
+        };
+        if (customPublicId) {
+            options.public_id = customPublicId;
+        }
+        const result = await cloudinary_1.v2.uploader.upload(fileData, options);
+        return {
+            url: result.url,
+            secureUrl: result.secure_url,
+            publicId: result.public_id,
+            format: result.format,
+            bytes: result.bytes,
+            width: result.width,
+            height: result.height,
+        };
+    }
+    /**
+     * Generate optimized public delivery URL with auto format and auto quality
+     */
+    static getOptimizedUrl(publicId, format = 'jpg') {
+        this.configure();
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'zswkxeiy';
+        return `https://res.cloudinary.com/${cloudName}/image/upload/f_auto,q_auto/${publicId}.${format}`;
+    }
+    /**
+     * Alias / backwards-compatible method to get permanent delivery URL
      */
     static getSignedDeliveryUrl(publicId, format = 'jpg') {
-        this.configure();
-        const apiSecret = process.env.CLOUDINARY_API_SECRET;
-        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-        if (!apiSecret || !cloudName) {
-            return `/api/mock-asset/${publicId}.${format}`;
-        }
-        try {
-            // Generate private authenticated URL with 1-hour expiration
-            const expiresAt = Math.round(Date.now() / 1000) + 3600;
-            return cloudinary_1.v2.utils.private_download_url(publicId, format, {
-                type: 'authenticated',
-                expires_at: expiresAt,
-            });
-        }
-        catch {
-            return `https://res.cloudinary.com/${cloudName}/image/authenticated/${publicId}.${format}`;
-        }
+        return this.getOptimizedUrl(publicId, format);
     }
 }
 exports.CloudinaryService = CloudinaryService;

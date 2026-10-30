@@ -6,11 +6,14 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { adminRouter } from './routes/admin.routes';
 import { customerOrderRouter } from './routes/customerOrder.routes';
+import { loyaltyRouter, adminLoyaltyRouter } from './routes/loyalty.routes';
 import { AdminController } from './controllers/admin.controller';
 import { ShipmentService } from './services/shipment.service';
+import { LoyaltyService } from './services/loyalty.service';
 import { Product } from './models/Product.model';
 import { Settings } from './models/Settings.model';
 import { PreOrderService } from './services/preorder.service';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -48,9 +51,11 @@ app.get('/api/health', (req, res) => {
 
 // Admin API
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/loyalty', adminLoyaltyRouter);
 
-// Customer & Public API (Orders, Account Orders, Public Locations)
+// Customer & Public API (Orders, Account Orders, Public Locations, Loyalty, Vouchers)
 app.use('/api', customerOrderRouter);
+app.use('/api', loyaltyRouter);
 
 // Pathao Webhook Receiver (Public endpoint for Pathao dispatch updates)
 app.post('/api/webhooks/pathao', AdminController.handlePathaoWebhook);
@@ -227,6 +232,22 @@ export async function startServer() {
 
   if (process.env.NODE_ENV !== 'test') {
     ShipmentService.initBackgroundSync();
+
+    // Hourly background job for maturing loyalty hold entries
+    if (process.env.LOYALTY_JOB_ENABLED !== 'false') {
+      cron.schedule('0 * * * *', async () => {
+        try {
+          const maturedRes = await LoyaltyService.processMaturedHoldEntries();
+          if (maturedRes.processedCount > 0) {
+            console.log(`[Loyalty Cron] Matured ${maturedRes.processedCount} loyalty hold ledger entries (${maturedRes.vouchersIssued} vouchers issued)`);
+          }
+        } catch (err: any) {
+          console.error('[Loyalty Cron] Error processing matured entries:', err.message);
+        }
+      });
+      console.log('[Loyalty Cron] Hourly maturity sync job scheduled');
+    }
+
     const server = app.listen(port, () => {
       console.log(`Hatkhola-Bazar backend listening on port ${port}`);
     });
